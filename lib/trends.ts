@@ -9,19 +9,19 @@ async function runActor(actorId: string, input: Record<string, unknown>): Promis
 
   // actor IDの「username/name」形式を「username~name」に変換（URL安全）
   const safeActorId = actorId.replace('/', '~')
+  const url = `${APIFY_BASE}/acts/${safeActorId}/runs-sync-get-dataset-items?token=${token}`
 
-  const res = await fetch(
-    `${APIFY_BASE}/acts/${safeActorId}/runs-sync-get-dataset-items?token=${token}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(input),
-    }
-  )
+  console.log(`[Apify] Actor実行: ${safeActorId}`)
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
 
   if (!res.ok) {
     const text = await res.text()
-    throw new Error(`Apify Actor ${actorId} 実行失敗: ${res.status} ${text.slice(0, 200)}`)
+    throw new Error(`Apify Actor ${safeActorId} 実行失敗: ${res.status} ${text.slice(0, 200)}`)
   }
 
   return await res.json() as Record<string, unknown>[]
@@ -40,18 +40,27 @@ function hashId(str: string): string {
 // === X (Twitter) トレンド取得 ===
 async function fetchXTrends(): Promise<TrendItem[]> {
   try {
-    const items = await runActor('novi/twitter-trending-topics', {
-      country: 'japan',
-      count: 15,
+    // apidojo/tweet-scraper で日本のトレンドを検索
+    const items = await runActor('apidojo/tweet-scraper', {
+      searchTerms: ['trending japan'],
+      maxItems: 15,
+      sort: 'Top',
     })
 
     return items.slice(0, 15).map((item, idx) => ({
-      id: hashId(`x-${item.name || item.trend || idx}`),
+      id: hashId(`x-${item.text || item.full_text || idx}`),
       platform: 'x' as SnsPlaftorm,
-      keyword: String(item.name || item.trend || ''),
-      volume: Number(item.tweet_volume || item.tweetVolume || 0) || undefined,
+      keyword: extractHashtagOrKeyword(item),
+      volume: Number(item.replyCount || 0) + Number(item.retweetCount || 0) || undefined,
       rank: idx + 1,
-      posts: extractXPosts(item),
+      posts: [{
+        username: String(item.author?.toString() || (item.user as Record<string, unknown>)?.screen_name || ''),
+        text: String(item.text || item.full_text || '').slice(0, 280),
+        url: item.url ? String(item.url) : undefined,
+        likes: Number(item.likeCount || item.favoriteCount || 0) || undefined,
+        retweets: Number(item.retweetCount || 0) || undefined,
+        views: Number(item.viewCount || 0) || undefined,
+      }],
       fetchedAt: new Date().toISOString(),
     })).filter(t => t.keyword)
   } catch (error) {
@@ -60,16 +69,15 @@ async function fetchXTrends(): Promise<TrendItem[]> {
   }
 }
 
-function extractXPosts(item: Record<string, unknown>): TrendPost[] {
-  const tweets = (item.tweets || item.topTweets || []) as Array<Record<string, unknown>>
-  return tweets.slice(0, 3).map(tweet => ({
-    username: String(tweet.username || tweet.user || tweet.screen_name || ''),
-    text: String(tweet.text || tweet.full_text || '').slice(0, 280),
-    url: tweet.url ? String(tweet.url) : undefined,
-    likes: Number(tweet.likes || tweet.favorite_count || 0) || undefined,
-    retweets: Number(tweet.retweets || tweet.retweet_count || 0) || undefined,
-    views: Number(tweet.views || tweet.view_count || 0) || undefined,
-  }))
+function extractHashtagOrKeyword(item: Record<string, unknown>): string {
+  // ハッシュタグがあれば使う
+  const entities = item.entities as Record<string, unknown> | undefined
+  const hashtags = (entities?.hashtags || []) as Array<Record<string, string>>
+  if (hashtags.length > 0) return `#${hashtags[0].text || hashtags[0].tag}`
+
+  // なければテキストの先頭30文字
+  const text = String(item.text || item.full_text || '')
+  return text.slice(0, 40).trim()
 }
 
 // === Instagram トレンド取得 ===
@@ -81,18 +89,37 @@ async function fetchInstagramTrends(): Promise<TrendItem[]> {
       'ファッション', 'ジュエリー',
     ]
 
-    const items = await runActor('apify/instagram-hashtag-scraper', {
-      hashtags: searchKeywords,
+    const items = await runActor('apify/instagram-scraper', {
+      search: searchKeywords.join(' '),
+      searchType: 'hashtag',
       resultsLimit: 5,
     })
 
     // ハッシュタグごとにグループ化
     const grouped = new Map<string, Array<Record<string, unknown>>>()
     for (const item of items) {
-      const tag = String(item.hashtag || item.hashtagName || '')
+      const tag = String(item.hashtag || item.hashtagName || item.queryTag || '')
       if (!tag) continue
       if (!grouped.has(tag)) grouped.set(tag, [])
       grouped.get(tag)!.push(item)
+    }
+
+    // グループ化できなかった場合は投稿ごとにリスト化
+    if (grouped.size === 0 && items.length > 0) {
+      return items.slice(0, 10).map((item, idx) => ({
+        id: hashId(`ig-${item.id || idx}`),
+        platform: 'instagram' as SnsPlaftorm,
+        keyword: String(item.caption || '').slice(0, 40) || `投稿${idx + 1}`,
+        volume: undefined,
+        rank: idx + 1,
+        posts: [{
+          username: String(item.ownerUsername || item.username || ''),
+          text: String(item.caption || '').slice(0, 280),
+          url: item.url ? String(item.url) : undefined,
+          likes: Number(item.likesCount || item.likes || 0) || undefined,
+        }],
+        fetchedAt: new Date().toISOString(),
+      }))
     }
 
     return Array.from(grouped.entries()).map(([tag, posts], idx) => ({
@@ -118,7 +145,7 @@ async function fetchInstagramTrends(): Promise<TrendItem[]> {
 // === TikTok トレンド取得 ===
 async function fetchTikTokTrends(): Promise<TrendItem[]> {
   try {
-    const items = await runActor('clockworks/free-tiktok-scraper', {
+    const items = await runActor('clockworks/tiktok-scraper', {
       hashtags: [
         'インフルエンサー', 'PR', 'ラグジュアリー',
         'ブランド', 'コラボ', 'SNS',
@@ -134,6 +161,25 @@ async function fetchTikTokTrends(): Promise<TrendItem[]> {
       if (!mainTag) continue
       if (!grouped.has(mainTag)) grouped.set(mainTag, [])
       grouped.get(mainTag)!.push(item)
+    }
+
+    // グループ化できなかった場合
+    if (grouped.size === 0 && items.length > 0) {
+      return items.slice(0, 10).map((item, idx) => ({
+        id: hashId(`tt-${item.id || idx}`),
+        platform: 'tiktok' as SnsPlaftorm,
+        keyword: String(item.text || item.desc || '').slice(0, 40) || `動画${idx + 1}`,
+        volume: undefined,
+        rank: idx + 1,
+        posts: [{
+          username: String((item.authorMeta as Record<string, string>)?.name || item.author || ''),
+          text: String(item.text || item.desc || '').slice(0, 280),
+          url: item.webVideoUrl ? String(item.webVideoUrl) : undefined,
+          likes: Number(item.diggCount || item.likes || 0) || undefined,
+          plays: Number(item.playCount || item.plays || 0) || undefined,
+        }],
+        fetchedAt: new Date().toISOString(),
+      }))
     }
 
     return Array.from(grouped.entries()).map(([tag, posts], idx) => ({
@@ -163,7 +209,7 @@ async function fetchTikTokTrends(): Promise<TrendItem[]> {
 // === Threads トレンド取得 ===
 async function fetchThreadsTrends(): Promise<TrendItem[]> {
   try {
-    const items = await runActor('apify/threads-scraper', {
+    const items = await runActor('curious_coder/threads-scraper', {
       searchQueries: [
         'インフルエンサー', 'PR案件', 'ラグジュアリー',
         'ブランドコラボ', 'SNSマーケティング',
@@ -177,6 +223,24 @@ async function fetchThreadsTrends(): Promise<TrendItem[]> {
       const query = String(item.searchQuery || item.query || 'threads')
       if (!grouped.has(query)) grouped.set(query, [])
       grouped.get(query)!.push(item)
+    }
+
+    // グループ化できなかった場合
+    if (grouped.size === 0 && items.length > 0) {
+      return items.slice(0, 10).map((item, idx) => ({
+        id: hashId(`th-${item.id || idx}`),
+        platform: 'threads' as SnsPlaftorm,
+        keyword: String(item.text || item.caption || '').slice(0, 40) || `投稿${idx + 1}`,
+        volume: undefined,
+        rank: idx + 1,
+        posts: [{
+          username: String(item.username || item.author || ''),
+          text: String(item.text || item.caption || '').slice(0, 280),
+          url: item.url ? String(item.url) : undefined,
+          likes: Number(item.likeCount || item.likes || 0) || undefined,
+        }],
+        fetchedAt: new Date().toISOString(),
+      }))
     }
 
     return Array.from(grouped.entries()).map(([keyword, posts], idx) => ({

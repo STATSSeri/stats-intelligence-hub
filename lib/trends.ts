@@ -83,43 +83,34 @@ function extractHashtagOrKeyword(item: Record<string, unknown>): string {
 // === Instagram トレンド取得 ===
 async function fetchInstagramTrends(): Promise<TrendItem[]> {
   try {
-    const searchKeywords = [
+    const hashtags = [
       'インフルエンサー', 'PR案件', 'ラグジュアリー',
       'コスメPR', 'ブランドコラボ', 'SNSマーケティング',
       'ファッション', 'ジュエリー',
     ]
 
+    // ハッシュタグ探索URLを生成
+    const directUrls = hashtags.map(tag =>
+      `https://www.instagram.com/explore/tags/${encodeURIComponent(tag)}/`
+    )
+
     const items = await runActor('apify/instagram-scraper', {
-      search: searchKeywords.join(' '),
-      searchType: 'hashtag',
-      resultsLimit: 5,
+      directUrls,
+      resultsLimit: 3,
+      resultsType: 'posts',
     })
 
-    // ハッシュタグごとにグループ化
+    // inputUrlからハッシュタグ名を抽出してグループ化
     const grouped = new Map<string, Array<Record<string, unknown>>>()
     for (const item of items) {
-      const tag = String(item.hashtag || item.hashtagName || item.queryTag || '')
+      // inputUrlやhashtags配列からタグ名を取得
+      const inputUrl = String(item.inputUrl || '')
+      const tagMatch = inputUrl.match(/\/tags\/([^/]+)\//)
+      const igHashtags = (item.hashtags || []) as string[]
+      const tag = tagMatch ? decodeURIComponent(tagMatch[1]) : igHashtags[0] || ''
       if (!tag) continue
       if (!grouped.has(tag)) grouped.set(tag, [])
       grouped.get(tag)!.push(item)
-    }
-
-    // グループ化できなかった場合は投稿ごとにリスト化
-    if (grouped.size === 0 && items.length > 0) {
-      return items.slice(0, 10).map((item, idx) => ({
-        id: hashId(`ig-${item.id || idx}`),
-        platform: 'instagram' as SnsPlaftorm,
-        keyword: String(item.caption || '').slice(0, 40) || `投稿${idx + 1}`,
-        volume: undefined,
-        rank: idx + 1,
-        posts: [{
-          username: String(item.ownerUsername || item.username || ''),
-          text: String(item.caption || '').slice(0, 280),
-          url: item.url ? String(item.url) : undefined,
-          likes: Number(item.likesCount || item.likes || 0) || undefined,
-        }],
-        fetchedAt: new Date().toISOString(),
-      }))
     }
 
     return Array.from(grouped.entries()).map(([tag, posts], idx) => ({
@@ -206,61 +197,11 @@ async function fetchTikTokTrends(): Promise<TrendItem[]> {
   }
 }
 
-// === Threads トレンド取得 ===
+// === Threads トレンド取得（現在無効化 — 有料Actorのため） ===
+// Apifyコンソールで curious_coder/threads-scraper をrentすれば有効化可能
 async function fetchThreadsTrends(): Promise<TrendItem[]> {
-  try {
-    const items = await runActor('curious_coder/threads-scraper', {
-      searchQueries: [
-        'インフルエンサー', 'PR案件', 'ラグジュアリー',
-        'ブランドコラボ', 'SNSマーケティング',
-      ],
-      maxItems: 20,
-    })
-
-    // キーワードごとにグループ化
-    const grouped = new Map<string, Array<Record<string, unknown>>>()
-    for (const item of items) {
-      const query = String(item.searchQuery || item.query || 'threads')
-      if (!grouped.has(query)) grouped.set(query, [])
-      grouped.get(query)!.push(item)
-    }
-
-    // グループ化できなかった場合
-    if (grouped.size === 0 && items.length > 0) {
-      return items.slice(0, 10).map((item, idx) => ({
-        id: hashId(`th-${item.id || idx}`),
-        platform: 'threads' as SnsPlaftorm,
-        keyword: String(item.text || item.caption || '').slice(0, 40) || `投稿${idx + 1}`,
-        volume: undefined,
-        rank: idx + 1,
-        posts: [{
-          username: String(item.username || item.author || ''),
-          text: String(item.text || item.caption || '').slice(0, 280),
-          url: item.url ? String(item.url) : undefined,
-          likes: Number(item.likeCount || item.likes || 0) || undefined,
-        }],
-        fetchedAt: new Date().toISOString(),
-      }))
-    }
-
-    return Array.from(grouped.entries()).map(([keyword, posts], idx) => ({
-      id: hashId(`th-${keyword}`),
-      platform: 'threads' as SnsPlaftorm,
-      keyword,
-      volume: posts.length,
-      rank: idx + 1,
-      posts: posts.slice(0, 3).map(p => ({
-        username: String(p.username || p.author || ''),
-        text: String(p.text || p.caption || '').slice(0, 280),
-        url: p.url ? String(p.url) : undefined,
-        likes: Number(p.likeCount || p.likes || 0) || undefined,
-      })),
-      fetchedAt: new Date().toISOString(),
-    }))
-  } catch (error) {
-    console.error('[Trends] Threads取得エラー:', error)
-    return []
-  }
+  console.log('[Trends] Threads: 無効化中（有料Actor未契約）')
+  return []
 }
 
 // === 全プラットフォーム一括取得 ===

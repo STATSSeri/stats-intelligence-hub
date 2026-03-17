@@ -9,7 +9,7 @@ async function runActor(actorId: string, input: Record<string, unknown>): Promis
 
   // actor IDの「username/name」形式を「username~name」に変換（URL安全）
   const safeActorId = actorId.replace('/', '~')
-  const url = `${APIFY_BASE}/acts/${safeActorId}/runs-sync-get-dataset-items?token=${token}`
+  const url = `${APIFY_BASE}/acts/${safeActorId}/run-sync-get-dataset-items?token=${token}`
 
   console.log(`[Apify] Actor実行: ${safeActorId}`)
 

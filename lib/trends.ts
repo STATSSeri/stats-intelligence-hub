@@ -7,8 +7,11 @@ async function runActor(actorId: string, input: Record<string, unknown>): Promis
   const token = process.env.APIFY_API_TOKEN
   if (!token) throw new Error('APIFY_API_TOKEN が未設定です')
 
+  // actor IDの「username/name」形式を「username~name」に変換（URL安全）
+  const safeActorId = actorId.replace('/', '~')
+
   const res = await fetch(
-    `${APIFY_BASE}/acts/${actorId}/runs-sync-get-dataset-items?token=${token}`,
+    `${APIFY_BASE}/acts/${safeActorId}/runs-sync-get-dataset-items?token=${token}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

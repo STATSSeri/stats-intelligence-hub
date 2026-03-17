@@ -75,8 +75,12 @@ export async function getNewsItems(limit = 100): Promise<NewsItem[]> {
   const results = await pipeline.exec()
 
   return results
-    .filter((r): r is string => r !== null && typeof r === 'string')
-    .map(r => JSON.parse(r) as NewsItem)
+    .filter((r): r is NonNullable<typeof r> => r !== null && r !== undefined)
+    .map(r => {
+      // Upstash Redisは自動でJSONパースする場合がある
+      if (typeof r === 'string') return JSON.parse(r) as NewsItem
+      return r as NewsItem
+    })
 }
 
 // 最終更新日時を取得
@@ -118,8 +122,11 @@ export async function getTrends(): Promise<PlatformTrends[]> {
   const results = await pipeline.exec()
 
   return results
-    .filter((r): r is string => r !== null && typeof r === 'string')
-    .map(r => JSON.parse(r) as PlatformTrends)
+    .filter((r): r is NonNullable<typeof r> => r !== null && r !== undefined)
+    .map(r => {
+      if (typeof r === 'string') return JSON.parse(r) as PlatformTrends
+      return r as PlatformTrends
+    })
 }
 
 // トレンド最終更新日時

@@ -11,7 +11,7 @@ export const FEED_SOURCES: FeedSource[] = [
   },
   {
     name: 'Bloomberg Japan',
-    url: 'https://www.bloomberg.co.jp/feeds/sitemap_news.xml',
+    url: 'https://news.google.com/rss/search?q=site:bloomberg.co.jp&hl=ja&gl=JP&ceid=JP:ja',
     category: 'luxury-brands',
     isPriority: true,
     language: 'ja',
@@ -25,7 +25,7 @@ export const FEED_SOURCES: FeedSource[] = [
   },
   {
     name: 'Fashionsnap',
-    url: 'https://www.fashionsnap.com/rss/',
+    url: 'https://news.google.com/rss/search?q=site:fashionsnap.com&hl=ja&gl=JP&ceid=JP:ja',
     category: 'luxury-brands',
     isPriority: true,
     language: 'ja',

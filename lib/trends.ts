@@ -1,9 +1,28 @@
-import { ApifyClient } from 'apify-client'
 import { SnsPlaftorm, TrendItem, TrendPost, PlatformTrends } from './types'
 
-const apify = new ApifyClient({
-  token: process.env.APIFY_API_TOKEN!,
-})
+const APIFY_BASE = 'https://api.apify.com/v2'
+
+// Apify REST APIでActorを同期実行しデータセット結果を直接取得
+async function runActor(actorId: string, input: Record<string, unknown>): Promise<Record<string, unknown>[]> {
+  const token = process.env.APIFY_API_TOKEN
+  if (!token) throw new Error('APIFY_API_TOKEN が未設定です')
+
+  const res = await fetch(
+    `${APIFY_BASE}/acts/${actorId}/runs-sync-get-dataset-items?token=${token}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    }
+  )
+
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`Apify Actor ${actorId} 実行失敗: ${res.status} ${text.slice(0, 200)}`)
+  }
+
+  return await res.json() as Record<string, unknown>[]
+}
 
 // ハッシュID生成
 function hashId(str: string): string {
@@ -18,15 +37,12 @@ function hashId(str: string): string {
 // === X (Twitter) トレンド取得 ===
 async function fetchXTrends(): Promise<TrendItem[]> {
   try {
-    // X Trending Topics用Actor
-    const run = await apify.actor('novi/twitter-trending-topics').call({
+    const items = await runActor('novi/twitter-trending-topics', {
       country: 'japan',
       count: 15,
-    }, { timeout: 120 })
+    })
 
-    const { items } = await apify.dataset(run.defaultDatasetId).listItems()
-
-    return (items as Array<Record<string, unknown>>).slice(0, 15).map((item, idx) => ({
+    return items.slice(0, 15).map((item, idx) => ({
       id: hashId(`x-${item.name || item.trend || idx}`),
       platform: 'x' as SnsPlaftorm,
       keyword: String(item.name || item.trend || ''),
@@ -56,23 +72,20 @@ function extractXPosts(item: Record<string, unknown>): TrendPost[] {
 // === Instagram トレンド取得 ===
 async function fetchInstagramTrends(): Promise<TrendItem[]> {
   try {
-    // Instagram Hashtag Scraper
     const searchKeywords = [
       'インフルエンサー', 'PR案件', 'ラグジュアリー',
       'コスメPR', 'ブランドコラボ', 'SNSマーケティング',
       'ファッション', 'ジュエリー',
     ]
 
-    const run = await apify.actor('apify/instagram-hashtag-scraper').call({
+    const items = await runActor('apify/instagram-hashtag-scraper', {
       hashtags: searchKeywords,
       resultsLimit: 5,
-    }, { timeout: 120 })
-
-    const { items } = await apify.dataset(run.defaultDatasetId).listItems()
+    })
 
     // ハッシュタグごとにグループ化
     const grouped = new Map<string, Array<Record<string, unknown>>>()
-    for (const item of items as Array<Record<string, unknown>>) {
+    for (const item of items) {
       const tag = String(item.hashtag || item.hashtagName || '')
       if (!tag) continue
       if (!grouped.has(tag)) grouped.set(tag, [])
@@ -83,7 +96,7 @@ async function fetchInstagramTrends(): Promise<TrendItem[]> {
       id: hashId(`ig-${tag}`),
       platform: 'instagram' as SnsPlaftorm,
       keyword: `#${tag}`,
-      volume: posts.length > 0 ? Number((posts[0] as Record<string, unknown>).mediaCount || 0) || undefined : undefined,
+      volume: posts.length > 0 ? Number(posts[0].mediaCount || 0) || undefined : undefined,
       rank: idx + 1,
       posts: posts.slice(0, 3).map(p => ({
         username: String(p.ownerUsername || p.username || ''),
@@ -102,19 +115,17 @@ async function fetchInstagramTrends(): Promise<TrendItem[]> {
 // === TikTok トレンド取得 ===
 async function fetchTikTokTrends(): Promise<TrendItem[]> {
   try {
-    const run = await apify.actor('clockworks/free-tiktok-scraper').call({
+    const items = await runActor('clockworks/free-tiktok-scraper', {
       hashtags: [
         'インフルエンサー', 'PR', 'ラグジュアリー',
         'ブランド', 'コラボ', 'SNS',
       ],
       resultsPerPage: 5,
-    }, { timeout: 120 })
-
-    const { items } = await apify.dataset(run.defaultDatasetId).listItems()
+    })
 
     // ハッシュタグごとにグループ化
     const grouped = new Map<string, Array<Record<string, unknown>>>()
-    for (const item of items as Array<Record<string, unknown>>) {
+    for (const item of items) {
       const hashtags = (item.hashtags || []) as Array<Record<string, string>>
       const mainTag = hashtags[0]?.name || String(item.hashtag || '')
       if (!mainTag) continue
@@ -149,19 +160,17 @@ async function fetchTikTokTrends(): Promise<TrendItem[]> {
 // === Threads トレンド取得 ===
 async function fetchThreadsTrends(): Promise<TrendItem[]> {
   try {
-    const run = await apify.actor('apify/threads-scraper').call({
+    const items = await runActor('apify/threads-scraper', {
       searchQueries: [
         'インフルエンサー', 'PR案件', 'ラグジュアリー',
         'ブランドコラボ', 'SNSマーケティング',
       ],
       maxItems: 20,
-    }, { timeout: 120 })
-
-    const { items } = await apify.dataset(run.defaultDatasetId).listItems()
+    })
 
     // キーワードごとにグループ化
     const grouped = new Map<string, Array<Record<string, unknown>>>()
-    for (const item of items as Array<Record<string, unknown>>) {
+    for (const item of items) {
       const query = String(item.searchQuery || item.query || 'threads')
       if (!grouped.has(query)) grouped.set(query, [])
       grouped.get(query)!.push(item)
